@@ -114,7 +114,31 @@ def handle_client(client_socket, addr):
             elif action == "get_diet_records":
                 records = database.get_user_diet_records(payload['user_id'], payload.get('date'))
                 response = {"status": "success", "data": records}
+
+            # --- 新增：管理员API ---
             
+            elif action == "get_all_users":
+                # 支持搜索功能
+                users = database.get_all_users(payload.get('query'))
+                response = {"status": "success", "data": users}
+                
+            elif action == "delete_user":
+                success, msg = database.delete_user(payload['target_id'])
+                response = {"status": "success" if success else "error", "message": msg}
+            
+            # --- 新增：通知系统 API ---
+            elif action == "send_notification":
+                success, msg = database.send_notification(payload['target_id'], payload['message'])
+                response = {"status": "success" if success else "error", "message": msg}
+                
+            elif action == "get_notifications":
+                notifs = database.get_user_notifications(payload['user_id'], payload.get('only_unread', True))
+                response = {"status": "success", "data": notifs}
+                
+            elif action == "mark_read":
+                success, msg = database.mark_notification_read(payload['notif_id'])
+                response = {"status": "success" if success else "error", "message": msg}
+
             # 发送响应
             client_socket.send(json.dumps(response).encode('utf-8'))
             

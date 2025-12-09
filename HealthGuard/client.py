@@ -324,6 +324,8 @@ class MainLayout(tk.Frame):
             self.create_sidebar_btn("🎯  健康目标", lambda: self.switch_page("goals"))
             self.create_sidebar_btn("🍎  饮食记录", lambda: self.switch_page("diet"))
             self.create_sidebar_btn("⏰  提醒中心", lambda: self.switch_page("reminders"))
+        else:
+            self.create_sidebar_btn("👥  用户管理", lambda: self.switch_page("users"))
         
         # 2. 右侧主体
         self.main_area = tk.Frame(self, bg=COLORS['main_bg'])
@@ -404,6 +406,10 @@ class MainLayout(tk.Frame):
         elif page_key == "reminders":
             self.header_label.config(text="首页 / 提醒中心")
             self.current_page_frame = RemindersPage(self.content_frame, self.controller)
+
+        elif page_key == "users":
+            self.header_label.config(text="首页 / 用户管理")
+            self.current_page_frame = AdminUserPage(self.content_frame, self.controller)
         
         # 显示新页面（关键修复）
         if self.current_page_frame:
@@ -417,6 +423,11 @@ class UserChartsPage(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent, bg=COLORS['main_bg'])
         self.controller = controller
+        
+        # --- 新增：通知区域 ---
+        self.notif_frame = tk.Frame(self, bg=COLORS['main_bg'])
+        self.notif_frame.pack(fill='x', pady=(0, 10))
+        self.check_notifications()
         
         # 上部分：图表
         chart_frame = tk.Frame(self, bg='white', bd=1, relief='solid')
@@ -449,6 +460,25 @@ class UserChartsPage(tk.Frame):
         
         self.load_data()
         
+    def check_notifications(self):
+        resp = self.controller.network.send_request("get_notifications", {"user_id": self.controller.current_user['id']})
+        if resp['status'] == 'success' and resp['data']:
+            for notif in resp['data']:
+                self.create_notif_banner(notif)
+                
+    def create_notif_banner(self, notif):
+        banner = tk.Frame(self.notif_frame, bg='#fdf6ec', bd=1, relief='solid') # 浅橙色背景
+        banner.pack(fill='x', pady=2)
+        
+        tk.Label(banner, text=f"🔔 管理员通知: {notif['message']}", 
+                 bg='#fdf6ec', fg='#e6a23c', font=("Microsoft YaHei", 10)).pack(side=tk.LEFT, padx=10, pady=8)
+                 
+        def mark_read():
+            self.controller.network.send_request("mark_read", {"notif_id": notif['id']})
+            banner.destroy()
+            
+        tk.Button(banner, text="×", command=mark_read, bd=0, bg='#fdf6ec', fg='gray', cursor='hand2').pack(side=tk.RIGHT, padx=10)
+
     def load_data(self):
         resp = self.controller.network.send_request("get_records", {"user_id": self.controller.current_user['id']})
         if resp["status"] == "success":
@@ -1025,6 +1055,128 @@ class RemindersPage(tk.Frame):
         
         tk.Button(dialog, text="创建", command=submit, bg=COLORS['primary'], fg='white',
                  relief='flat', padx=30, pady=8).pack(pady=20)
+
+# --- 新增：管理员用户管理页面 ---
+class AdminUserPage(tk.Frame):
+    def __init__(self, parent, controller):
+        super().__init__(parent, bg=COLORS['main_bg'])
+        self.controller = controller
+        
+        # 1. 顶部操作栏（搜索框）
+        action_bar = tk.Frame(self, bg=COLORS['main_bg'])
+        action_bar.pack(fill='x', pady=(0, 10))
+        
+        tk.Label(action_bar, text="搜索用户:", bg=COLORS['main_bg'], font=("Microsoft YaHei", 10)).pack(side=tk.LEFT, padx=(0, 10))
+        self.search_var = tk.StringVar()
+        entry = tk.Entry(action_bar, textvariable=self.search_var, font=("Microsoft YaHei", 10), width=20)
+        entry.pack(side=tk.LEFT, padx=(0, 10))
+        
+        tk.Button(action_bar, text="🔍 查询", command=self.load_users,
+                 bg=COLORS['primary'], fg='white', relief='flat', padx=15).pack(side=tk.LEFT)
+                 
+        tk.Button(action_bar, text="❌ 删除选中用户", command=self.delete_selected_user,
+                 bg=COLORS['danger'], fg='white', relief='flat', padx=15).pack(side=tk.RIGHT)
+                 
+        # --- 新增 ---
+        tk.Button(action_bar, text="📢 发送通知", command=self.send_msg_dialog,
+                 bg=COLORS['success'], fg='white', relief='flat', padx=15).pack(side=tk.RIGHT, padx=10)
+        
+        # 2. 用户列表 (表格)
+        list_card = tk.Frame(self, bg='white')
+        list_card.pack(fill='both', expand=True)
+        
+        columns = ("id", "username", "gender", "age", "created_at")
+        self.tree = ttk.Treeview(list_card, columns=columns, show='headings', height=20)
+        
+        self.tree.heading("id", text="ID")
+        self.tree.column("id", width=50, anchor='center')
+        
+        self.tree.heading("username", text="用户名")
+        self.tree.column("username", width=150)
+        
+        self.tree.heading("gender", text="性别")
+        self.tree.column("gender", width=80, anchor='center')
+        
+        self.tree.heading("age", text="年龄")
+        self.tree.column("age", width=80, anchor='center')
+        
+        self.tree.heading("created_at", text="注册时间")
+        self.tree.column("created_at", width=200)
+        
+        self.tree.pack(fill='both', expand=True, padx=15, pady=10)
+        
+        # 初始加载
+        self.load_users()
+
+    def load_users(self):
+        # 清空现有数据
+        self.tree.delete(*self.tree.get_children())
+        
+        # 发送请求
+        query = self.search_var.get().strip()
+        resp = self.controller.network.send_request("get_all_users", {"query": query if query else None})
+        
+        if resp['status'] == 'success':
+            for user in resp['data']:
+                self.tree.insert("", "end", values=(
+                    user['id'], user['username'], user['gender'], 
+                    user['age'], user['created_at']
+                ))
+        else:
+            messagebox.showerror("错误", "无法加载用户列表")
+
+    def delete_selected_user(self):
+        selected_item = self.tree.selection()
+        if not selected_item:
+            messagebox.showwarning("提示", "请先选择一个用户")
+            return
+            
+        values = self.tree.item(selected_item)['values']
+        user_id = values[0]
+        username = values[1]
+        
+        # 确认对话框
+        if messagebox.askyesno("危险操作", f"确定要删除用户 [{username}] 吗？\n该操作将永久删除该用户的所有健康档案、记录、用药等数据！\n此操作不可恢复！"):
+            resp = self.controller.network.send_request("delete_user", {"target_id": user_id})
+            
+            if resp['status'] == 'success':
+                messagebox.showinfo("成功", resp['message'])
+                self.load_users() # 刷新列表
+            else:
+                messagebox.showerror("失败", resp['message'])
+
+    def send_msg_dialog(self):
+        selected_item = self.tree.selection()
+        if not selected_item:
+            messagebox.showwarning("提示", "请先选择一个接收消息的用户")
+            return
+            
+        values = self.tree.item(selected_item)['values']
+        user_id = values[0]
+        username = values[1]
+        
+        dialog = tk.Toplevel(self)
+        dialog.title(f"发送消息给 {username}")
+        dialog.geometry("400x250")
+        dialog.configure(bg='white')
+        
+        tk.Label(dialog, text="消息内容:", bg='white', font=("Microsoft YaHei", 10)).pack(anchor='w', padx=20, pady=(20, 5))
+        
+        text_area = tk.Text(dialog, height=5, width=40, font=("Microsoft YaHei", 10))
+        text_area.pack(padx=20)
+        
+        def submit():
+            msg = text_area.get("1.0", "end").strip()
+            if not msg: return
+            
+            resp = self.controller.network.send_request("send_notification", {"target_id": user_id, "message": msg})
+            if resp['status'] == 'success':
+                messagebox.showinfo("成功", "通知已发送")
+                dialog.destroy()
+            else:
+                messagebox.showerror("失败", resp['message'])
+                
+        tk.Button(dialog, text="发送", command=submit, bg=COLORS['primary'], fg='white', relief='flat', padx=20, pady=5).pack(pady=20)
 
 if __name__ == "__main__":
     app = HealthApp()

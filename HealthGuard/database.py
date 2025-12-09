@@ -110,6 +110,18 @@ def init_db():
     )
     ''')
     
+    # --- 新增：系统通知表 ---
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS notifications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,          -- 接收者ID
+        message TEXT NOT NULL,    -- 消息内容
+        is_read INTEGER DEFAULT 0,-- 0:未读, 1:已读
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users (id)
+    )
+    ''')
+    
     # 初始化一个默认管理员账号 (admin/123456)
     try:
         admin_pwd = hashlib.sha256("123456".encode()).hexdigest()
@@ -375,6 +387,91 @@ def get_user_diet_records(user_id, date=None):
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
+
+# --- 新增：管理员管理接口 ---
+
+def get_all_users(query=None):
+    """管理员：获取所有用户列表（不包含密码）"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    sql = "SELECT id, username, role, age, gender, created_at FROM users WHERE role != 'admin'"
+    params = []
+    
+    if query:
+        sql += " AND username LIKE ?"
+        params.append(f"%{query}%")
+        
+    sql += " ORDER BY created_at DESC"
+    
+    cursor.execute(sql, params)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def delete_user(user_id):
+    """管理员：删除用户及其所有关联数据"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        # 1. 删除关联表数据
+        tables = ['health_data', 'medications', 'health_goals', 'reminders', 'diet_records', 'notifications']
+        for table in tables:
+            cursor.execute(f"DELETE FROM {table} WHERE user_id = ?", (user_id,))
+            
+        # 2. 删除用户本身
+        cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        
+        conn.commit()
+        return True, "用户及其数据已彻底删除"
+    except Exception as e:
+        conn.rollback()
+        return False, str(e)
+    finally:
+        conn.close()
+
+# --- 新增：通知管理接口 ---
+
+def send_notification(user_id, message):
+    """管理员：发送通知给特定用户"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("INSERT INTO notifications (user_id, message) VALUES (?, ?)", (user_id, message))
+        conn.commit()
+        return True, "通知发送成功"
+    except Exception as e:
+        return False, str(e)
+    finally:
+        conn.close()
+
+def get_user_notifications(user_id, only_unread=True):
+    """用户：获取通知"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    sql = "SELECT * FROM notifications WHERE user_id = ?"
+    if only_unread:
+        sql += " AND is_read = 0"
+    sql += " ORDER BY created_at DESC"
+    
+    cursor.execute(sql, (user_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def mark_notification_read(notif_id):
+    """用户：标记通知为已读"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("UPDATE notifications SET is_read = 1 WHERE id = ?", (notif_id,))
+        conn.commit()
+        return True, "操作成功"
+    except Exception as e:
+        return False, str(e)
+    finally:
+        conn.close()
 
 if __name__ == "__main__":
     init_db()
