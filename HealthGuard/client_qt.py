@@ -7,7 +7,9 @@ import requests
 import webbrowser
 import subprocess
 import platform
+import random
 from bs4 import BeautifulSoup
+from advisor import SmartHealthAdvisor
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QLabel, QLineEdit, QPushButton, QStackedWidget, QMessageBox, 
@@ -465,11 +467,11 @@ class MainWindow(QMainWindow):
         
         # 1. Dashboard (Index 0)
         self.add_menu_btn("📊  仪表盘", 0)
-        # 2. Health News (Index 1)
-        self.add_menu_btn("📰  健康资讯", 1)
         
         role = self.app_manager.current_user['role']
         if role == 'user':
+            # 2. Health News (Index 1)
+            self.add_menu_btn("📰  健康资讯", 1)
             self.add_menu_btn("📝  健康打卡", 2)
             self.add_menu_btn("👤  健康档案", 3)
             self.add_menu_btn("💊  用药管理", 4)
@@ -568,36 +570,82 @@ class NewsWorker(QThread):
 
     def run(self):
         news_list = []
-        try:
-            # 尝试爬取 39健康网 (结构较稳定)
-            url = "http://news.39.net/"
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            }
-            resp = requests.get(url, headers=headers, timeout=5)
-            # 39健康网可能是 gb2312 或 utf-8，尝试自动检测
-            resp.encoding = resp.apparent_encoding 
-            
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            
-            # 针对 39健康网的列表选择器
-            items = soup.select('.newslist li a, .art_list li a, .textlist li a')
-            
-            count = 0
-            for item in items:
-                if count >= 10: break
-                title = item.get_text().strip()
-                link = item.get('href')
-                if link and title and len(title) > 5: # 过滤过短标题
-                    if not link.startswith('http'):
-                        continue # 忽略相对路径，简化逻辑
-                    news_list.append({'title': title, 'link': link, 'source': '39健康网'})
-                    count += 1
+        visited_links = set()
+
+        def scrape_sina():
+            try:
+                url = "https://health.sina.com.cn/"
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                }
+                resp = requests.get(url, headers=headers, timeout=5)
+                resp.encoding = resp.apparent_encoding
+                soup = BeautifulSoup(resp.text, 'html.parser')
+                
+                # Sina Health generic link search
+                # Focus on news content areas if possible, or just all valid news links
+                # Strategy: Look for links with meaningful titles and url patterns
+                count = 0
+                for a in soup.find_all('a'):
+                    if count >= 15: break
+                    title = a.get_text().strip()
+                    link = a.get('href')
                     
-        except Exception as e:
-            print(f"News scrape error: {e}")
+                    if not link or not title: continue
+                    if link in visited_links: continue
+                    
+                    # Basic filters for Sina
+                    if len(title) < 10: continue
+                    if '注册' in title or '登录' in title or '关于我们' in title: continue
+                    if not link.startswith('http'): continue
+                    
+                    # URL pattern check for news articles (heuristic)
+                    # Sina news often has /news/ or date in path or is an article page
+                    is_news = False
+                    if 'health.sina.com.cn' in link or 'k.sina.cn' in link:
+                         if '/news/' in link or '/doc-' in link or 'article_' in link:
+                             is_news = True
+                    
+                    if is_news:
+                        news_list.append({'title': title, 'link': link, 'source': '新浪健康'})
+                        visited_links.add(link)
+                        count += 1
+            except Exception as e:
+                print(f"Sina scrape error: {e}")
+
+        def scrape_39():
+            try:
+                url = "http://news.39.net/"
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                }
+                resp = requests.get(url, headers=headers, timeout=5)
+                resp.encoding = resp.apparent_encoding
+                soup = BeautifulSoup(resp.text, 'html.parser')
+                
+                items = soup.select('.newslist li a, .art_list li a, .textlist li a')
+                count = 0
+                for item in items:
+                    if count >= 5: break
+                    title = item.get_text().strip()
+                    link = item.get('href')
+                    
+                    if link and title and len(title) > 8:
+                        if not link.startswith('http'): continue
+                        if link in visited_links: continue
+                        
+                        news_list.append({'title': title, 'link': link, 'source': '39健康网'})
+                        visited_links.add(link)
+                        count += 1
+            except Exception as e:
+                print(f"39.net scrape error: {e}")
+
+        # Execute scrapers
+        scrape_sina()
+        if len(news_list) < 10:
+            scrape_39()
             
-        # 如果爬取失败或没有内容，使用默认数据
+        # Fallback
         if not news_list:
             news_list = [
                 {'title': '【健康小贴士】保持充足睡眠有助于提高免疫力', 'link': 'https://www.who.int/zh', 'source': 'HealthGuard'},
@@ -607,6 +655,9 @@ class NewsWorker(QThread):
                 {'title': '【科普】世界卫生组织：关于身体活动的建议', 'link': 'https://www.who.int/zh/news-room/fact-sheets/detail/physical-activity', 'source': 'WHO'},
             ]
             
+        # Randomize the order
+        random.shuffle(news_list)
+        
         self.finished.emit(news_list)
 
 class HealthNewsPage(QWidget):
@@ -617,6 +668,8 @@ class HealthNewsPage(QWidget):
         
         # Header
         header = CardFrame()
+        # Remove border for the text box frame around "Health News" text
+        header.setStyleSheet(header.styleSheet() + "QFrame { border: none; }")
         header.setFixedHeight(80)
         hl = QHBoxLayout(header)
         hl.addWidget(QLabel("📰 今日健康资讯"))
@@ -665,6 +718,8 @@ class HealthNewsPage(QWidget):
 
     def add_news_card(self, news):
         card = CardFrame()
+        # Remove border for news item cards
+        card.setStyleSheet(card.styleSheet() + "QFrame { border: none; }")
         card.setFixedHeight(100)
         card.setCursor(Qt.PointingHandCursor)
         
@@ -707,7 +762,43 @@ class UserChartsPage(QWidget):
     def __init__(self, app_manager):
         super().__init__()
         self.app_manager = app_manager
+        self.advisor = SmartHealthAdvisor()
         layout = QVBoxLayout(self)
+        
+        # Smart Advice Section
+        self.advice_layout = QVBoxLayout()
+        layout.addLayout(self.advice_layout)
+        
+        # Weather & Advice Card
+        self.advice_card = CardFrame()
+        # self.advice_card.setFixedHeight(160) # Auto height
+        self.advice_card.setStyleSheet(self.advice_card.styleSheet() + "QFrame { border: none; }")
+        
+        adv_layout = QVBoxLayout(self.advice_card)
+        adv_layout.setContentsMargins(20, 20, 20, 20)
+        
+        # Top: Weather + Refresh
+        top_h = QHBoxLayout()
+        self.weather_lbl = QLabel("正在获取天气...")
+        self.weather_lbl.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {COLORS['primary']};")
+        top_h.addWidget(self.weather_lbl)
+        
+        top_h.addStretch()
+        
+        refresh_btn = RoundedButton("🔄 刷新建议", width=100, height=30, font_size=12)
+        refresh_btn.clicked.connect(self.load_advice)
+        top_h.addWidget(refresh_btn)
+        
+        adv_layout.addLayout(top_h)
+        
+        # Advice Text
+        self.advice_text = QLabel("正在生成智能健康建议...")
+        self.advice_text.setWordWrap(True)
+        self.advice_text.setStyleSheet(f"font-size: 14px; line-height: 1.5; color: {COLORS['text_main']}; margin-top: 10px;")
+        self.advice_text.setTextFormat(Qt.RichText)
+        adv_layout.addWidget(self.advice_text)
+        
+        self.advice_layout.addWidget(self.advice_card)
         
         # Notifications Area
         self.notif_layout = QVBoxLayout()
@@ -775,6 +866,29 @@ class UserChartsPage(QWidget):
         layout.addWidget(table_card, stretch=2)
         
         self.load_data()
+        QTimer.singleShot(500, self.load_advice)
+
+    def load_advice(self):
+        try:
+            # Request records (already loaded in self.load_data but we might need fresh if not called together)
+            # Actually load_data is async request, this is also async.
+            # We can just request records again or rely on load_data if we store records. 
+            # Let's request to be safe and independent.
+            resp = self.app_manager.network.send_request("get_records", {"user_id": self.app_manager.current_user['id']})
+            records = []
+            if resp['status'] == 'success':
+                records = resp['data']
+            
+            advice = self.advisor.generate_recommendation(records)
+            self.update_advice_ui(advice)
+        except Exception as e:
+            print(f"Error loading advice: {e}")
+            self.advice_text.setText(f"无法生成建议: {e}")
+
+    def update_advice_ui(self, advice):
+        weather = advice['raw']['weather']
+        self.weather_lbl.setText(f"📍 {weather['text']}")
+        self.advice_text.setText(advice['text'])
 
     def check_notifications(self):
         resp = self.app_manager.network.send_request("get_notifications", {"user_id": self.app_manager.current_user['id']})
@@ -931,14 +1045,15 @@ class DataEntryPage(QWidget):
             for label, key, default in items:
                 row = QHBoxLayout()
                 row.addWidget(QLabel(label))
+                row.addStretch()
                 if key == 'notes':
                     ent = QTextEdit()
                     ent.setFixedHeight(60)
+                    ent.setFixedWidth(200)
                 else:
                     ent = RoundedEntry(width=200)
                     ent.setText(str(default))
                 row.addWidget(ent)
-                row.addStretch() # Ensure it doesn't stretch too far
                 form_layout.addLayout(row)
                 self.entries[key] = ent
                 
@@ -1206,6 +1321,8 @@ class GoalsPage(QWidget):
 
     def add_goal_card(self, goal):
         card = CardFrame()
+        # Remove border for goal cards
+        card.setStyleSheet(card.styleSheet() + "QFrame { border: none; }")
         card.setFixedHeight(120)
         l = QVBoxLayout(card)
         
