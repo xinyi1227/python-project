@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QStackedWidget, QMessageBox, 
     QTableWidget, QTableWidgetItem, QHeaderView, QComboBox, 
     QFrame, QDialog, QTextEdit, QScrollArea, QSizePolicy, QGraphicsDropShadowEffect,
-    QAbstractItemView, QTabWidget, QTabBar
+    QAbstractItemView, QTabWidget, QTabBar, QDateEdit, QSpinBox, QDoubleSpinBox
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QSize, QRect, QThread, QTimer
 from PyQt5.QtGui import QColor, QFont, QPixmap, QIcon, QPalette, QBrush, QPainter, QPainterPath
@@ -510,8 +510,15 @@ class MainWindow(QMainWindow):
         btn.setCheckable(True)
         btn.setAutoExclusive(True)
         if index == 0: btn.setChecked(True)
-        btn.clicked.connect(lambda: self.pages.setCurrentIndex(index))
+        btn.clicked.connect(lambda: self.on_menu_click(index, text))
         self.menu_layout.addWidget(btn)
+
+    def on_menu_click(self, index, text):
+        self.pages.setCurrentIndex(index)
+        # Extract name cleanly
+        clean_text = text.split()[-1] 
+        if hasattr(self, 'header_title'):
+            self.header_title.setText(f"首页 / {clean_text}")
 
     def setup_header(self):
         self.header = QFrame()
@@ -521,9 +528,9 @@ class MainWindow(QMainWindow):
         layout = QHBoxLayout(self.header)
         layout.setContentsMargins(30, 0, 30, 0)
         
-        title = QLabel("首页 / 仪表盘")
-        title.setStyleSheet(f"color: {COLORS['text_regular']}; font-size: 16px;")
-        layout.addWidget(title)
+        self.header_title = QLabel("首页 / 仪表盘")
+        self.header_title.setStyleSheet(f"color: {COLORS['text_regular']}; font-size: 16px;")
+        layout.addWidget(self.header_title)
         
         layout.addStretch()
         
@@ -998,64 +1005,222 @@ class DataEntryPage(QWidget):
         self.app_manager = app_manager
         
         container = CardFrame()
+        # Glassmorphism / Clean Card Style
+        container.setStyleSheet("""
+            QFrame { 
+                background-color: rgba(255, 255, 255, 0.95); 
+                border: none;
+                border-radius: 16px;
+            }
+        """)
+        # Soft Shadow
+        shadow = QGraphicsDropShadowEffect(container)
+        shadow.setBlurRadius(30)
+        shadow.setColor(QColor(0, 0, 0, 20))
+        shadow.setOffset(0, 8)
+        container.setGraphicsEffect(shadow)
+
         main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(20, 20, 20, 20)
         main_layout.addWidget(container)
         
         layout = QVBoxLayout(container)
+        layout.setContentsMargins(30, 30, 30, 30)
+        layout.setSpacing(25)
         
-        # Header
+        # Header with Title and Button
         header = QHBoxLayout()
-        btn = RoundedButton("📝 提交今日数据", width=160)
+        title = QLabel("今日健康数据")
+        title.setStyleSheet(f"font-size: 22px; font-weight: bold; color: {COLORS['text_main']};")
+        header.addWidget(title)
+        header.addStretch()
+        
+        btn = RoundedButton("提交数据", width=140, bg_color=COLORS['success']) # Emerald Green accent
         btn.clicked.connect(self.submit)
         header.addWidget(btn)
-        header.addStretch()
         layout.addLayout(header)
         
-        # Form
+        # Scroll Area for Form
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("background: transparent;")
+        
         content = QWidget()
         form_layout = QVBoxLayout(content)
+        form_layout.setSpacing(30)
+        form_layout.setContentsMargins(10, 10, 10, 10)
         
         self.entries = {}
+        
+        # Styles for Inputs
+        input_style = f"""
+            QDoubleSpinBox, QSpinBox, QDateEdit {{
+                border: 1px solid #DCDFE6;
+                border-radius: 8px;
+                padding: 5px 10px;
+                font-size: 14px;
+                background: #FFFFFF;
+                color: {COLORS['text_main']};
+                min-height: 40px;
+            }}
+            QDoubleSpinBox:focus, QSpinBox:focus, QDateEdit:focus {{
+                border: 1px solid {COLORS['primary']};
+                background: #F0F9FF;
+            }}
+            QDoubleSpinBox::up-button, QSpinBox::up-button {{
+                width: 20px;
+                border-left: 1px solid #DCDFE6;
+                background: transparent;
+                margin: 2px;
+            }}
+            QDoubleSpinBox::down-button, QSpinBox::down-button {{
+                width: 20px;
+                border-left: 1px solid #DCDFE6;
+                background: transparent;
+                margin: 2px;
+            }}
+            /* Calendar Widget Styling */
+            QCalendarWidget QWidget {{
+                background-color: white; 
+                border-bottom: 1px solid #EBEEF5;
+            }}
+            QCalendarWidget QToolButton {{
+                color: {COLORS['text_main']};
+                background-color: transparent;
+                icon-size: 20px;
+                border: none;
+                margin: 5px;
+            }}
+            QCalendarWidget QToolButton:hover {{
+                background-color: #F0F9FF;
+                border-radius: 5px;
+            }}
+            QCalendarWidget QMenu {{
+                background-color: white;
+                color: {COLORS['text_main']};
+            }}
+            QCalendarWidget QSpinBox {{
+                background-color: white;
+                color: {COLORS['text_main']};
+                selection-background-color: {COLORS['primary']};
+                selection-color: white;
+            }}
+            QCalendarWidget QAbstractItemView:enabled {{
+                color: {COLORS['text_main']};
+                background-color: white;
+                selection-background-color: {COLORS['primary']};
+                selection-color: white;
+                font-size: 14px;
+            }}
+            QCalendarWidget QAbstractItemView:disabled {{
+                color: #C0C4CC;
+            }}
+        """
+        
         fields = [
             ("基础指标", [
-                ("日期 (YYYY-MM-DD)", "date", datetime.date.today().strftime("%Y-%m-%d")),
-                ("体重 (kg)", "weight", ""),
-                ("收缩压 (mmHg)", "sys_bp", ""),
-                ("舒张压 (mmHg)", "dia_bp", ""),
-                ("心率 (次/分)", "heart_rate", ""),
-                ("血糖 (mmol/L)", "blood_sugar", ""),
-                ("体温 (°C)", "temperature", "")
+                ("日期", "date", "date"),
+                ("体重", "weight", "double", "kg", 0, 300),
+                ("体温", "temperature", "double", "°C", 30, 45),
+                ("收缩压", "sys_bp", "int", "mmHg", 0, 300),
+                ("舒张压", "dia_bp", "int", "mmHg", 0, 300),
+                ("心率", "heart_rate", "int", "次/分", 0, 250),
+                ("血糖", "blood_sugar", "double", "mmol/L", 0, 50),
             ]),
             ("生活习惯", [
-                ("步数", "steps", ""),
-                ("睡眠时长 (小时)", "sleep_hours", ""),
-                ("饮水量 (ml)", "water_intake", "")
+                ("步数", "steps", "int", "步", 0, 100000),
+                ("睡眠时长", "sleep_hours", "double", "小时", 0, 24),
+                ("饮水量", "water_intake", "int", "ml", 0, 5000)
             ]),
-            ("备注", [("今日备注", "notes", "")])
+            ("备注", [("备注", "notes", "text")])
         ]
         
         for section, items in fields:
-            lbl = QLabel(section)
-            lbl.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {COLORS['primary']}; margin-top: 10px;")
-            form_layout.addWidget(lbl)
+            # Section Header
+            sec_header = QLabel(section)
+            sec_header.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {COLORS['primary']}; border-left: 4px solid {COLORS['primary']}; padding-left: 10px;")
+            form_layout.addWidget(sec_header)
             
-            for label, key, default in items:
-                row = QHBoxLayout()
-                row.addWidget(QLabel(label))
-                row.addStretch()
-                if key == 'notes':
-                    ent = QTextEdit()
-                    ent.setFixedHeight(60)
-                    ent.setFixedWidth(200)
+            # Grid Layout for Inputs
+            grid = QVBoxLayout()
+            grid.setSpacing(15)
+            
+            # Group items in rows of 2
+            current_row = QHBoxLayout()
+            count = 0
+            
+            for item in items:
+                label_text = item[0]
+                key = item[1]
+                type_ = item[2]
+                
+                # Input Container
+                item_container = QWidget()
+                item_layout = QVBoxLayout(item_container)
+                item_layout.setContentsMargins(0,0,0,0)
+                item_layout.setSpacing(5)
+                
+                lbl = QLabel(label_text)
+                lbl.setStyleSheet(f"color: {COLORS['text_regular']}; font-weight: 500;")
+                item_layout.addWidget(lbl)
+                
+                widget = None
+                if type_ == 'date':
+                    widget = QDateEdit()
+                    widget.setDisplayFormat("yyyy-MM-dd")
+                    widget.setDate(datetime.date.today())
+                    widget.setCalendarPopup(True)
+                    widget.setStyleSheet(input_style)
+                elif type_ == 'double':
+                    widget = QDoubleSpinBox()
+                    widget.setRange(item[4], item[5])
+                    widget.setSuffix(f" {item[3]}")
+                    widget.setDecimals(1)
+                    widget.setStyleSheet(input_style)
+                    # Set empty-ish default? No, spinbox has value. Let's set to min or reasonable default if known, else 0
+                elif type_ == 'int':
+                    widget = QSpinBox()
+                    widget.setRange(item[4], item[5])
+                    widget.setSuffix(f" {item[3]}")
+                    widget.setStyleSheet(input_style)
+                elif type_ == 'text':
+                    widget = QTextEdit()
+                    widget.setFixedHeight(80)
+                    widget.setStyleSheet(f"""
+                        border: 1px solid #DCDFE6;
+                        border-radius: 8px;
+                        padding: 10px;
+                        font-size: 14px;
+                    """)
+                
+                if widget:
+                    item_layout.addWidget(widget)
+                    self.entries[key] = widget
+                
+                # Add to grid row
+                if type_ == 'text':
+                    # Text area takes full width
+                    if count % 2 != 0:
+                        current_row.addStretch()
+                        grid.addLayout(current_row)
+                        current_row = QHBoxLayout()
+                        count = 0
+                    grid.addWidget(item_container)
                 else:
-                    ent = RoundedEntry(width=200)
-                    ent.setText(str(default))
-                row.addWidget(ent)
-                form_layout.addLayout(row)
-                self.entries[key] = ent
+                    current_row.addWidget(item_container)
+                    count += 1
+                    if count == 2:
+                        grid.addLayout(current_row)
+                        current_row = QHBoxLayout()
+                        count = 0
+            
+            if count > 0:
+                current_row.addStretch()
+                grid.addLayout(current_row)
+                
+            form_layout.addLayout(grid)
+            form_layout.addSpacing(10)
                 
         form_layout.addStretch()
         scroll.setWidget(content)
@@ -1066,8 +1231,18 @@ class DataEntryPage(QWidget):
         for k, v in self.entries.items():
             if isinstance(v, QTextEdit):
                 data[k] = v.toPlainText()
-            else:
-                data[k] = v.text()
+            elif isinstance(v, QDateEdit):
+                data[k] = v.date().toString("yyyy-MM-dd")
+            elif isinstance(v, (QSpinBox, QDoubleSpinBox)):
+                val = v.value()
+                # If value is 0, maybe treat as empty? Or just send 0.
+                # Requirement: "Metrics input fields". 
+                # Let's send as string or number. Server expects string or number.
+                if val == 0 and k not in ['steps']: # steps can be 0, others unlikely if measured
+                    data[k] = "" 
+                else:
+                    data[k] = str(val)
+        
         data['user_id'] = self.app_manager.current_user['id']
         
         resp = self.app_manager.network.send_request("add_record", data)
