@@ -1326,8 +1326,17 @@ class GoalsPage(QWidget):
         card.setFixedHeight(120)
         l = QVBoxLayout(card)
         
-        # Progress
-        progress = (goal['current_value'] / goal['target_value'] * 100) if goal['target_value'] > 0 else 0
+        # Progress calculation based on goal type
+        is_reduce_goal = any(kw in goal['goal_type'] for kw in ['减肥', '减重', '降', '瘦'])
+        
+        if is_reduce_goal:
+            # For weight loss/reduction goals: target/current represents how close we are (100% = reached)
+            # Example: Target 65, Current 70.5 -> 65/70.5 = 92.2% (Approaching 100%)
+            # Example: Target 65, Current 60 -> 65/60 = 108% (Exceeded goal)
+            progress = (goal['target_value'] / goal['current_value'] * 100) if goal['current_value'] > 0 else 0
+        else:
+            # For accumulation goals: current/target
+            progress = (goal['current_value'] / goal['target_value'] * 100) if goal['target_value'] > 0 else 0
         
         # Top: Type + Progress
         top = QHBoxLayout()
